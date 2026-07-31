@@ -8,18 +8,30 @@ use crate::components::{
     TiredDebuff, UnitId,
 };
 use crate::events::{BuildRequest, Hungry, Rested, Sated, TargetReached, Tired};
+use crate::pathfinding::{astar, random_reachable_path, tile_path_to_waypoints};
 use crate::resources::{
     ConstructionQueue, DeltaTime, MapObjects, MapTileObject, ObjectKind, SimulationRng,
     TileMapResource,
 };
 use crate::systems::{
-    construction_progress_system, construction_system, execute_needs_plan, find_path_action,
-    job_assignment_system, move_along_path, needs_accrual, needs_decision, needs_event_check,
-    release_job_on_needs, DEFAULT_SPEED, MAX_DELTA_MS,
+    DEFAULT_SPEED, MAX_DELTA_MS, construction_progress_system, construction_system,
+    execute_needs_plan, find_path_action, job_assignment_system, move_along_path, needs_accrual,
+    needs_decision, needs_event_check, release_job_on_needs,
 };
 
 pub const FIELD_WIDTH: f32 = 25.0;
 pub const FIELD_HEIGHT: f32 = 19.0;
+
+fn initial_path(
+    start: (u32, u32),
+    tile_map: &TileMapResource,
+    rng: &mut StdRng,
+) -> Vec<(f32, f32)> {
+    let tile_path = random_reachable_path(start, tile_map, rng)
+        .or_else(|| astar(start, start, tile_map))
+        .expect("a spawned unit must start on a walkable tile");
+    tile_path_to_waypoints(&tile_path, tile_map)
+}
 
 #[wasm_bindgen]
 pub struct GameWorld {
@@ -50,17 +62,22 @@ pub fn create_game_world(unit_count: u32, seed: u64) -> GameWorld {
         world.spawn((
             UnitId(id),
             Position { x, y },
-            Path { waypoints: Vec::new() },
+            Path {
+                waypoints: initial_path((col, row), &tile_map, &mut rng),
+            },
             Speed(DEFAULT_SPEED),
             Satiation(100.0),
             Energy(100.0),
         ));
     }
 
-    for _ in 0..3 {
-        let (col, row) = tile_map.random_walkable_tile(&mut rng);
+    for (col, row) in tile_map
+        .shuffled_walkable_tiles(&mut rng)
+        .into_iter()
+        .take(3)
+    {
         let idx = (row * tile_map.cols + col) as usize;
-        if idx < map_objects.tiles.len() && map_objects.tiles[idx].is_none() {
+        if idx < map_objects.tiles.len() {
             map_objects.tiles[idx] = Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5));
         }
     }
@@ -70,17 +87,20 @@ pub fn create_game_world(unit_count: u32, seed: u64) -> GameWorld {
     world.insert_resource(SimulationRng(rng));
 
     let mut schedule = Schedule::default();
-    schedule.add_systems((
-        needs_accrual,
-        needs_event_check,
-        needs_decision,
-        execute_needs_plan,
-        release_job_on_needs,
-        (find_path_action, construction_system),
-        job_assignment_system,
-        construction_progress_system,
-        move_along_path,
-    ).chain());
+    schedule.add_systems(
+        (
+            needs_accrual,
+            needs_event_check,
+            needs_decision,
+            execute_needs_plan,
+            release_job_on_needs,
+            (find_path_action, construction_system),
+            job_assignment_system,
+            construction_progress_system,
+            move_along_path,
+        )
+            .chain(),
+    );
 
     GameWorld { world, schedule }
 }
@@ -150,8 +170,7 @@ impl GameWorld {
             &Speed,
             Option<&AssignedJob>,
         )>();
-        for (entity, id, sat, ene, hungry, tired, plan, speed, assigned) in
-            query.iter(&self.world)
+        for (entity, id, sat, ene, hungry, tired, plan, speed, assigned) in query.iter(&self.world)
         {
             if !first {
                 json.push(',');
@@ -188,7 +207,14 @@ impl GameWorld {
             let _ = write!(
                 json,
                 r#"{{"id":{},"satiation":{},"energy":{},"hungry":{},"tired":{},"needsPlan":"{}","speed":{},"assignedJob":{}}}"#,
-                id.0, sat.0, ene.0, hungry.is_some(), tired.is_some(), plan_str, speed.0, assigned_job
+                id.0,
+                sat.0,
+                ene.0,
+                hungry.is_some(),
+                tired.is_some(),
+                plan_str,
+                speed.0,
+                assigned_job
             );
         }
         json.push(']');
@@ -237,10 +263,8 @@ impl GameWorld {
                                 ObjectKind::BerryBush => "berrybush",
                             };
                             use std::fmt::Write as _;
-                            let _ = write!(
-                                json,
-                                r#"{{"col":{col},"row":{row},"kind":"{kind_str}"}}"#
-                            );
+                            let _ =
+                                write!(json, r#"{{"col":{col},"row":{row},"kind":"{kind_str}"}}"#);
                         }
                         MapTileObject::FoodSource(kind, charges) => {
                             let kind_str = match kind {
@@ -318,5 +342,75 @@ impl GameWorld {
         }
         json.push(']');
         json
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{Path, Position};
+
+    type UnitPathSnapshot = ((f32, f32), Vec<(f32, f32)>);
+
+    #[test]
+    fn initial_world_has_three_unique_charged_bushes_for_fixed_seeds() {
+        for seed in [0, 1, 2, 42, 12345, u64::MAX] {
+            let game = create_game_world(3, seed);
+            let map = game.world.resource::<MapObjects>();
+            let tile_map = game.world.resource::<TileMapResource>();
+            let bushes: Vec<usize> = map
+                .tiles
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, object)| match object {
+                    Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5)) => Some(idx),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(bushes.len(), 3, "seed {seed} should create three bushes");
+            assert_eq!(
+                bushes
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                3,
+                "seed {seed} should not collide bushes"
+            );
+            for idx in bushes {
+                let col = idx as u32 % tile_map.cols;
+                let row = idx as u32 / tile_map.cols;
+                assert!(tile_map.is_walkable(col, row));
+            }
+        }
+    }
+
+    #[test]
+    fn spawned_units_have_non_empty_walkable_paths() {
+        let mut game = create_game_world(3, 42);
+        let paths: Vec<UnitPathSnapshot> = {
+            let mut query = game.world.query::<(&Position, &Path)>();
+            query
+                .iter(&game.world)
+                .map(|(position, path)| ((position.x, position.y), path.waypoints.clone()))
+                .collect()
+        };
+        let tile_map = game.world.resource::<TileMapResource>();
+
+        assert_eq!(paths.len(), 3);
+        for ((x, y), waypoints) in paths {
+            assert!(!waypoints.is_empty());
+            let mut previous = tile_map.world_to_tile(x, y);
+            assert!(tile_map.is_walkable(previous.0, previous.1));
+            for (waypoint_x, waypoint_y) in waypoints {
+                let current = tile_map.world_to_tile(waypoint_x, waypoint_y);
+                assert!(tile_map.is_walkable(current.0, current.1));
+                assert!(
+                    previous.0.abs_diff(current.0) + previous.1.abs_diff(current.1) <= 1,
+                    "path must remain 4-connected"
+                );
+                previous = current;
+            }
+        }
     }
 }

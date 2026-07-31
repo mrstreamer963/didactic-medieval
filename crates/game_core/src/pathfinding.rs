@@ -1,6 +1,11 @@
 use std::collections::BinaryHeap;
 
+use rand::Rng;
+use rand::rngs::StdRng;
+
 use crate::resources::TileMapResource;
+
+pub const MAX_PATH_ATTEMPTS: u32 = 20;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Node {
@@ -22,8 +27,8 @@ impl PartialOrd for Node {
 }
 
 fn heuristic(a: (u32, u32), b: (u32, u32)) -> u32 {
-    let dx = if a.0 > b.0 { a.0 - b.0 } else { b.0 - a.0 };
-    let dy = if a.1 > b.1 { a.1 - b.1 } else { b.1 - a.1 };
+    let dx = a.0.abs_diff(b.0);
+    let dy = a.1.abs_diff(b.1);
     dx + dy
 }
 
@@ -105,6 +110,34 @@ pub fn astar(
                     row: nr,
                 });
             }
+        }
+    }
+
+    None
+}
+
+pub fn tile_path_to_waypoints(path: &[(u32, u32)], tile_map: &TileMapResource) -> Vec<(f32, f32)> {
+    path.iter()
+        .map(|&(col, row)| tile_map.tile_to_world(col, row))
+        .collect()
+}
+
+pub fn random_reachable_path(
+    start: (u32, u32),
+    tile_map: &TileMapResource,
+    rng: &mut StdRng,
+) -> Option<Vec<(u32, u32)>> {
+    if !tile_map.is_walkable(start.0, start.1) {
+        return None;
+    }
+
+    for _ in 0..MAX_PATH_ATTEMPTS {
+        let goal = (
+            rng.gen_range(0..tile_map.cols),
+            rng.gen_range(0..tile_map.rows),
+        );
+        if let Some(path) = astar(start, goal, tile_map) {
+            return Some(path);
         }
     }
 

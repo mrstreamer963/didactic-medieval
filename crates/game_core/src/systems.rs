@@ -1,23 +1,20 @@
-use bevy_ecs::prelude::*;
-use rand::Rng;
-
 use crate::components::{
     AssignedJob, Energy, HungryDebuff, NeedKind, NeedsPlan, Path, Position, Satiation, Speed,
     TiredDebuff, UnitId,
 };
 use crate::events::{BuildRequest, Hungry, Rested, Sated, TargetReached, Tired};
-use crate::pathfinding::astar;
+use crate::pathfinding::{astar, random_reachable_path, tile_path_to_waypoints};
 use crate::resources::{
     ConstructionJob, ConstructionQueue, DeltaTime, MapObjects, MapTileObject, ObjectKind,
     SimulationRng, TileMapResource,
 };
 use crate::world::FIELD_HEIGHT;
 use crate::world::FIELD_WIDTH;
+use bevy_ecs::prelude::*;
 
 pub const DEFAULT_SPEED: f32 = 3.75;
 pub const ARRIVAL_THRESHOLD: f32 = 0.125;
 pub const MAX_DELTA_MS: f32 = 200.0;
-pub const MAX_RETARGET_ATTEMPTS: u32 = 20;
 
 pub const HUNGER_RATE: f32 = 0.8;
 pub const FATIGUE_RATE: f32 = 0.4;
@@ -31,6 +28,9 @@ pub const ARRIVAL_TILE_THRESHOLD: f32 = 0.5;
 
 pub const BUILD_SPEED: f32 = 15.0;
 pub const MAX_WORKERS_PER_JOB: usize = 2;
+
+type JobAssignment = (Entity, usize, Vec<(f32, f32)>);
+type CandidateAssignment = (usize, f32, Vec<(f32, f32)>);
 
 pub fn needs_accrual(
     time: Res<DeltaTime>,
@@ -47,6 +47,7 @@ pub fn needs_accrual(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn needs_event_check(
     mut hungry_writer: MessageWriter<Hungry>,
     mut tired_writer: MessageWriter<Tired>,
@@ -54,7 +55,13 @@ pub fn needs_event_check(
     mut rested_writer: MessageWriter<Rested>,
     mut commands: Commands,
     query: Query<
-        (Entity, &Satiation, &Energy, Option<&HungryDebuff>, Option<&TiredDebuff>),
+        (
+            Entity,
+            &Satiation,
+            &Energy,
+            Option<&HungryDebuff>,
+            Option<&TiredDebuff>,
+        ),
         With<UnitId>,
     >,
 ) {
@@ -78,6 +85,7 @@ pub fn needs_event_check(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn needs_decision(
     mut hungry_reader: MessageReader<Hungry>,
     mut tired_reader: MessageReader<Tired>,
@@ -86,15 +94,36 @@ pub fn needs_decision(
     mut commands: Commands,
     mut map_objects: ResMut<MapObjects>,
     tile_map: Res<TileMapResource>,
-    debuffs: Query<(Entity, Option<&HungryDebuff>, Option<&TiredDebuff>), With<UnitId>>,
+    debuffs: Query<
+        (
+            Entity,
+            &Position,
+            Option<&HungryDebuff>,
+            Option<&TiredDebuff>,
+        ),
+        With<UnitId>,
+    >,
     needs_query: Query<
-        (Entity, Option<&HungryDebuff>, Option<&TiredDebuff>, Option<&NeedsPlan>),
+        (
+            Entity,
+            &Position,
+            Option<&HungryDebuff>,
+            Option<&TiredDebuff>,
+            Option<&NeedsPlan>,
+        ),
         With<UnitId>,
     >,
     plans: Query<&NeedsPlan>,
 ) {
     for Hungry(entity) in hungry_reader.read() {
-        if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush) {
+        if let Ok(pos) = debuffs.get(*entity).map(|(_, pos, _, _)| pos)
+            && let Some(target) = find_nearest_object(
+                &map_objects,
+                &tile_map,
+                (pos.x, pos.y),
+                ObjectKind::BerryBush,
+            )
+        {
             commands.entity(*entity).insert(NeedsPlan {
                 kind: NeedKind::Eat,
                 target,
@@ -103,7 +132,10 @@ pub fn needs_decision(
     }
 
     for Tired(entity) in tired_reader.read() {
-        if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::Bed) {
+        if let Ok(pos) = debuffs.get(*entity).map(|(_, pos, _, _)| pos)
+            && let Some(target) =
+                find_nearest_object(&map_objects, &tile_map, (pos.x, pos.y), ObjectKind::Bed)
+        {
             commands.entity(*entity).insert(NeedsPlan {
                 kind: NeedKind::Sleep,
                 target,
@@ -112,78 +144,84 @@ pub fn needs_decision(
     }
 
     for Sated(entity) in sated_reader.read() {
-        if let Ok(plan) = plans.get(*entity) {
-            if plan.kind == NeedKind::Eat {
-                let (tx, ty) = plan.target;
-                let col = tx.floor() as u32;
-                let row = ty.floor() as u32;
-                if col < tile_map.cols && row < tile_map.rows {
-                    let idx = (row * tile_map.cols + col) as usize;
-                    if idx < map_objects.tiles.len() {
-                        if let Some(MapTileObject::FoodSource(ObjectKind::BerryBush, ref mut charges)) = map_objects.tiles[idx] {
-                            if *charges > 0 {
-                                *charges -= 1;
-                            }
-                            if *charges == 0 {
-                                map_objects.tiles[idx] = None;
-                            }
-                        }
+        if let Ok(plan) = plans.get(*entity)
+            && plan.kind == NeedKind::Eat
+        {
+            let (tx, ty) = plan.target;
+            let col = tx.floor() as u32;
+            let row = ty.floor() as u32;
+            if col < tile_map.cols && row < tile_map.rows {
+                let idx = (row * tile_map.cols + col) as usize;
+                if idx < map_objects.tiles.len()
+                    && let Some(MapTileObject::FoodSource(ObjectKind::BerryBush, ref mut charges)) =
+                        map_objects.tiles[idx]
+                {
+                    if *charges > 0 {
+                        *charges -= 1;
+                    }
+                    if *charges == 0 {
+                        map_objects.tiles[idx] = None;
                     }
                 }
             }
         }
         commands.entity(*entity).remove::<NeedsPlan>();
-        if let Ok((_, _, tired_debuff)) = debuffs.get(*entity) {
-            if tired_debuff.is_some() {
-                if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::Bed)
-                {
-                    commands.entity(*entity).insert(NeedsPlan {
-                        kind: NeedKind::Sleep,
-                        target,
-                    });
-                }
-            }
+        if let Ok((_, pos, _, tired_debuff)) = debuffs.get(*entity)
+            && tired_debuff.is_some()
+            && let Some(target) =
+                find_nearest_object(&map_objects, &tile_map, (pos.x, pos.y), ObjectKind::Bed)
+        {
+            commands.entity(*entity).insert(NeedsPlan {
+                kind: NeedKind::Sleep,
+                target,
+            });
         }
     }
 
     for Rested(entity) in rested_reader.read() {
         commands.entity(*entity).remove::<NeedsPlan>();
-        if let Ok((_, hungry_debuff, _)) = debuffs.get(*entity) {
-            if hungry_debuff.is_some() {
-                if let Some(target) =
-                    find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush)
-                {
-                    commands.entity(*entity).insert(NeedsPlan {
-                        kind: NeedKind::Eat,
-                        target,
-                    });
-                }
-            }
+        if let Ok((_, pos, hungry_debuff, _)) = debuffs.get(*entity)
+            && hungry_debuff.is_some()
+            && let Some(target) = find_nearest_object(
+                &map_objects,
+                &tile_map,
+                (pos.x, pos.y),
+                ObjectKind::BerryBush,
+            )
+        {
+            commands.entity(*entity).insert(NeedsPlan {
+                kind: NeedKind::Eat,
+                target,
+            });
         }
     }
 
-    for (entity, hungry_debuff, tired_debuff, plan) in needs_query.iter() {
+    for (entity, pos, hungry_debuff, tired_debuff, plan) in needs_query.iter() {
         if plan.is_some() {
             continue;
         }
-        if tired_debuff.is_some() {
-            if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::Bed) {
-                commands.entity(entity).insert(NeedsPlan {
-                    kind: NeedKind::Sleep,
-                    target,
-                });
-                continue;
-            }
+        if tired_debuff.is_some()
+            && let Some(target) =
+                find_nearest_object(&map_objects, &tile_map, (pos.x, pos.y), ObjectKind::Bed)
+        {
+            commands.entity(entity).insert(NeedsPlan {
+                kind: NeedKind::Sleep,
+                target,
+            });
+            continue;
         }
-        if hungry_debuff.is_some() {
-            if let Some(target) =
-                find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush)
-            {
-                commands.entity(entity).insert(NeedsPlan {
-                    kind: NeedKind::Eat,
-                    target,
-                });
-            }
+        if hungry_debuff.is_some()
+            && let Some(target) = find_nearest_object(
+                &map_objects,
+                &tile_map,
+                (pos.x, pos.y),
+                ObjectKind::BerryBush,
+            )
+        {
+            commands.entity(entity).insert(NeedsPlan {
+                kind: NeedKind::Eat,
+                target,
+            });
         }
     }
 }
@@ -244,6 +282,24 @@ pub fn release_job_on_needs(
     }
 }
 
+fn construction_tile_index(
+    tile_map: &TileMapResource,
+    map_objects: &MapObjects,
+    col: u32,
+    row: u32,
+) -> Option<usize> {
+    if col >= tile_map.cols || row >= tile_map.rows || !tile_map.is_walkable(col, row) {
+        return None;
+    }
+
+    let idx = (row * tile_map.cols + col) as usize;
+    if idx >= map_objects.tiles.len() || map_objects.tiles[idx].is_some() {
+        return None;
+    }
+
+    Some(idx)
+}
+
 pub fn construction_system(
     mut reader: MessageReader<BuildRequest>,
     mut map_objects: ResMut<MapObjects>,
@@ -251,19 +307,10 @@ pub fn construction_system(
     mut construction_queue: ResMut<ConstructionQueue>,
 ) {
     for event in reader.read() {
-        if event.col >= tile_map.cols || event.row >= tile_map.rows {
+        let Some(idx) = construction_tile_index(&tile_map, &map_objects, event.col, event.row)
+        else {
             continue;
-        }
-        let idx = (event.row * tile_map.cols + event.col) as usize;
-        if idx >= map_objects.tiles.len() {
-            continue;
-        }
-        if map_objects.tiles[idx].is_some() {
-            continue;
-        }
-        if event.kind == ObjectKind::Wall && !tile_map.is_walkable(event.col, event.row) {
-            continue;
-        }
+        };
 
         map_objects.tiles[idx] = Some(MapTileObject::ConstructionSite(event.kind));
 
@@ -290,44 +337,38 @@ pub fn job_assignment_system(
     query: Query<(Entity, &Position, Option<&NeedsPlan>, Option<&AssignedJob>)>,
     mut commands: Commands,
 ) {
-    let mut assignments: Vec<(Entity, usize, Vec<(f32, f32)>)> = Vec::new();
+    let mut assignments: Vec<JobAssignment> = Vec::new();
 
     for (entity, pos, needs_plan, assigned_job) in query.iter() {
         if needs_plan.is_some() || assigned_job.is_some() {
             continue;
         }
 
-        let mut best_idx = None;
+        let (start_col, start_row) = tile_map.world_to_tile(pos.x, pos.y);
+        let mut best_assignment: Option<CandidateAssignment> = None;
         let mut best_dist = f32::MAX;
 
         for (i, job) in construction_queue.jobs.iter().enumerate() {
             if job.assigned_units.len() >= MAX_WORKERS_PER_JOB {
                 continue;
             }
+
+            let Some(tile_path) = astar((start_col, start_row), (job.col, job.row), &tile_map)
+            else {
+                continue;
+            };
+
             let (jx, jy) = tile_map.tile_to_world(job.col, job.row);
             let dx = jx - pos.x;
             let dy = jy - pos.y;
             let dist = dx * dx + dy * dy;
             if dist < best_dist {
                 best_dist = dist;
-                best_idx = Some(i);
+                best_assignment = Some((i, dist, tile_path_to_waypoints(&tile_path, &tile_map)));
             }
         }
 
-        if let Some(job_idx) = best_idx {
-            let job = &construction_queue.jobs[job_idx];
-            let (start_col, start_row) = tile_map.world_to_tile(pos.x, pos.y);
-            let waypoints =
-                if let Some(tile_path) = astar((start_col, start_row), (job.col, job.row), &tile_map)
-                {
-                    tile_path
-                        .iter()
-                        .map(|&(c, r)| tile_map.tile_to_world(c, r))
-                        .collect()
-                } else {
-                    let (wx, wy) = tile_map.tile_to_world(job.col, job.row);
-                    vec![(wx, wy)]
-                };
+        if let Some((job_idx, _, waypoints)) = best_assignment {
             assignments.push((entity, job_idx, waypoints));
         }
     }
@@ -382,8 +423,7 @@ pub fn construction_progress_system(
     }
 
     for i in completed.into_iter().rev() {
-        let assigned_entities: Vec<Entity> =
-            construction_queue.jobs[i].assigned_units.clone();
+        let assigned_entities: Vec<Entity> = construction_queue.jobs[i].assigned_units.clone();
         let job = &construction_queue.jobs[i];
         let idx = (job.row * tile_map.cols + job.col) as usize;
 
@@ -395,7 +435,7 @@ pub fn construction_progress_system(
             }
         }
 
-        if job.kind == ObjectKind::Wall {
+        if job.kind == ObjectKind::Wall && idx < tile_map.tiles.len() {
             tile_map.tiles[idx] = false;
         }
 
@@ -410,6 +450,7 @@ pub fn construction_progress_system(
 fn find_nearest_object(
     map_objects: &MapObjects,
     tile_map: &TileMapResource,
+    origin: (f32, f32),
     kind: ObjectKind,
 ) -> Option<(f32, f32)> {
     let mut best_dist = f32::MAX;
@@ -420,16 +461,16 @@ fn find_nearest_object(
             if idx >= map_objects.tiles.len() {
                 continue;
             }
+            if !tile_map.is_walkable(col, row) {
+                continue;
+            }
             match map_objects.tiles[idx] {
                 Some(MapTileObject::Building(k)) if k == kind => {}
-                Some(MapTileObject::FoodSource(k, _)) if k == kind => {}
+                Some(MapTileObject::FoodSource(k, charges)) if k == kind && charges > 0 => {}
                 _ => continue,
             }
             let (cx, cy) = tile_map.tile_to_world(col, row);
-            let d = match best_pos {
-                Some((bx, by)) => (cx - bx) * (cx - bx) + (cy - by) * (cy - by),
-                None => cx * cx + cy * cy,
-            };
+            let d = (cx - origin.0) * (cx - origin.0) + (cy - origin.1) * (cy - origin.1);
             if d < best_dist {
                 best_dist = d;
                 best_pos = Some((cx, cy));
@@ -439,15 +480,47 @@ fn find_nearest_object(
     best_pos
 }
 
+fn waypoints_are_walkable(
+    position: &Position,
+    waypoints: &[(f32, f32)],
+    tile_map: &TileMapResource,
+) -> bool {
+    let mut previous = tile_map.world_to_tile(position.x, position.y);
+    if !tile_map.is_walkable(previous.0, previous.1) {
+        return false;
+    }
+
+    for &(x, y) in waypoints {
+        let current = tile_map.world_to_tile(x, y);
+        if !tile_map.is_walkable(current.0, current.1) {
+            return false;
+        }
+        let distance = previous.0.abs_diff(current.0) + previous.1.abs_diff(current.1);
+        if distance > 1 {
+            return false;
+        }
+        previous = current;
+    }
+
+    true
+}
+
 pub fn move_along_path(
     mut writer: MessageWriter<TargetReached>,
     time: Res<DeltaTime>,
+    tile_map: Res<TileMapResource>,
     mut query: Query<(Entity, &mut Position, &mut Path, &Speed)>,
 ) {
     let delta_secs = time.0;
 
     for (entity, mut pos, mut path, speed) in query.iter_mut() {
         if path.waypoints.is_empty() {
+            writer.write(TargetReached { entity });
+            continue;
+        }
+
+        if !waypoints_are_walkable(&pos, &path.waypoints, &tile_map) {
+            path.waypoints.clear();
             writer.write(TargetReached { entity });
             continue;
         }
@@ -512,32 +585,10 @@ pub fn find_path_action(
 
         let (start_col, start_row) = tile_map.world_to_tile(pos.x, pos.y);
 
-        for _ in 0..MAX_RETARGET_ATTEMPTS {
-            let goal_col = rng.0.gen_range(0..tile_map.cols);
-            let goal_row = rng.0.gen_range(0..tile_map.rows);
-
-            if !tile_map.is_walkable(goal_col, goal_row) {
-                continue;
-            }
-
-            if let Some(tile_path) = astar((start_col, start_row), (goal_col, goal_row), &tile_map)
-            {
-                let waypoints: Vec<(f32, f32)> = tile_path
-                    .iter()
-                    .map(|&(c, r)| tile_map.tile_to_world(c, r))
-                    .collect();
-                path.waypoints = waypoints;
-                break;
-            }
-        }
-
-        if path.waypoints.is_empty() {
-            let fallback_col = rng.0.gen_range(0..tile_map.cols);
-            let fallback_row = rng.0.gen_range(0..tile_map.rows);
-            if tile_map.is_walkable(fallback_col, fallback_row) {
-                let (fx, fy) = tile_map.tile_to_world(fallback_col, fallback_row);
-                path.waypoints = vec![(fx, fy)];
-            }
+        if let Some(tile_path) =
+            random_reachable_path((start_col, start_row), &tile_map, &mut rng.0)
+        {
+            path.waypoints = tile_path_to_waypoints(&tile_path, &tile_map);
         }
     }
 }
@@ -546,8 +597,8 @@ pub fn find_path_action(
 mod tests {
     use super::*;
     use crate::resources::ConstructionJob;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     fn make_world(cols: u32, rows: u32) -> World {
         let mut world = World::new();
@@ -570,7 +621,11 @@ mod tests {
 
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 5, row: 7, kind: ObjectKind::Wall });
+            .write(BuildRequest {
+                col: 5,
+                row: 7,
+                kind: ObjectKind::Wall,
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(construction_system);
@@ -579,7 +634,10 @@ mod tests {
         let idx = (7 * 25 + 5) as usize;
         let map = world.resource::<MapObjects>();
         assert!(
-            matches!(&map.tiles[idx], Some(MapTileObject::ConstructionSite(ObjectKind::Wall))),
+            matches!(
+                &map.tiles[idx],
+                Some(MapTileObject::ConstructionSite(ObjectKind::Wall))
+            ),
             "expected ConstructionSite(Wall) at (5,7)"
         );
 
@@ -601,7 +659,11 @@ mod tests {
 
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 3, row: 3, kind: ObjectKind::Wall });
+            .write(BuildRequest {
+                col: 3,
+                row: 3,
+                kind: ObjectKind::Wall,
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(construction_system);
@@ -609,11 +671,41 @@ mod tests {
 
         let map = world.resource::<MapObjects>();
         assert!(
-            matches!(&map.tiles[idx], Some(MapTileObject::Building(ObjectKind::Bed))),
+            matches!(
+                &map.tiles[idx],
+                Some(MapTileObject::Building(ObjectKind::Bed))
+            ),
             "tile should remain unchanged"
         );
         let queue = world.resource::<ConstructionQueue>();
         assert!(queue.jobs.is_empty());
+    }
+
+    #[test]
+    fn construction_system_ignores_all_kinds_on_occupied_tile() {
+        for kind in [ObjectKind::Wall, ObjectKind::Bed, ObjectKind::BerryBush] {
+            let mut world = make_world(25, 19);
+            let idx = (3 * 25 + 3) as usize;
+            world.resource_mut::<MapObjects>().tiles[idx] =
+                Some(MapTileObject::Building(ObjectKind::Bed));
+            world
+                .resource_mut::<Messages<BuildRequest>>()
+                .write(BuildRequest {
+                    col: 3,
+                    row: 3,
+                    kind,
+                });
+
+            let mut schedule = Schedule::default();
+            schedule.add_systems(construction_system);
+            schedule.run(&mut world);
+
+            assert!(matches!(
+                &world.resource::<MapObjects>().tiles[idx],
+                Some(MapTileObject::Building(ObjectKind::Bed))
+            ));
+            assert!(world.resource::<ConstructionQueue>().jobs.is_empty());
+        }
     }
 
     #[test]
@@ -624,39 +716,76 @@ mod tests {
 
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 4, row: 4, kind: ObjectKind::Wall });
+            .write(BuildRequest {
+                col: 4,
+                row: 4,
+                kind: ObjectKind::Wall,
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(construction_system);
         schedule.run(&mut world);
 
         let map = world.resource::<MapObjects>();
-        assert!(map.tiles[idx].is_none(), "blocked tile should not get a wall");
+        assert!(
+            map.tiles[idx].is_none(),
+            "blocked tile should not get a wall"
+        );
         let queue = world.resource::<ConstructionQueue>();
         assert!(queue.jobs.is_empty());
+    }
+
+    #[test]
+    fn construction_system_ignores_all_kinds_on_blocked_tile() {
+        for kind in [ObjectKind::Wall, ObjectKind::Bed, ObjectKind::BerryBush] {
+            let mut world = make_world(25, 19);
+            let idx = (4 * 25 + 4) as usize;
+            world.resource_mut::<TileMapResource>().tiles[idx] = false;
+            world
+                .resource_mut::<Messages<BuildRequest>>()
+                .write(BuildRequest {
+                    col: 4,
+                    row: 4,
+                    kind,
+                });
+
+            let mut schedule = Schedule::default();
+            schedule.add_systems(construction_system);
+            schedule.run(&mut world);
+
+            assert!(world.resource::<MapObjects>().tiles[idx].is_none());
+            assert!(world.resource::<ConstructionQueue>().jobs.is_empty());
+        }
     }
 
     #[test]
     fn job_assignment_assigns_free_colonist() {
         let mut world = make_world(25, 19);
 
-        let colonist = world.spawn((
-            UnitId(0),
-            Position { x: 5.5, y: 5.5 },
-            Path { waypoints: Vec::new() },
-            Speed(3.75),
-            Satiation(100.0),
-            Energy(100.0),
-        )).id();
+        let colonist = world
+            .spawn((
+                UnitId(0),
+                Position { x: 5.5, y: 5.5 },
+                Path {
+                    waypoints: Vec::new(),
+                },
+                Speed(3.75),
+                Satiation(100.0),
+                Energy(100.0),
+            ))
+            .id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: Vec::new(),
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: Vec::new(),
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(job_assignment_system);
@@ -673,21 +802,31 @@ mod tests {
     fn job_assignment_skips_colonist_with_needs() {
         let mut world = make_world(25, 19);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: 5.5, y: 5.5 },
-            Path { waypoints: Vec::new() },
-            NeedsPlan { kind: NeedKind::Eat, target: (10.0, 10.0) },
-        )).id();
+        let _colonist = world
+            .spawn((
+                UnitId(0),
+                Position { x: 5.5, y: 5.5 },
+                Path {
+                    waypoints: Vec::new(),
+                },
+                NeedsPlan {
+                    kind: NeedKind::Eat,
+                    target: (10.0, 10.0),
+                },
+            ))
+            .id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: Vec::new(),
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: Vec::new(),
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(job_assignment_system);
@@ -701,21 +840,28 @@ mod tests {
     fn job_assignment_skips_colonist_with_existing_job() {
         let mut world = make_world(25, 19);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: 5.5, y: 5.5 },
-            Path { waypoints: Vec::new() },
-            AssignedJob,
-        )).id();
+        let _colonist = world
+            .spawn((
+                UnitId(0),
+                Position { x: 5.5, y: 5.5 },
+                Path {
+                    waypoints: Vec::new(),
+                },
+                AssignedJob,
+            ))
+            .id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: Vec::new(),
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: Vec::new(),
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(job_assignment_system);
@@ -729,32 +875,44 @@ mod tests {
     fn release_job_on_need_removes_assigned() {
         let mut world = make_world(25, 19);
 
-        let colonist = world.spawn((
-            UnitId(0),
-            Position { x: 5.5, y: 5.5 },
-            NeedsPlan { kind: NeedKind::Eat, target: (10.0, 10.0) },
-            AssignedJob,
-        )).id();
+        let colonist = world
+            .spawn((
+                UnitId(0),
+                Position { x: 5.5, y: 5.5 },
+                NeedsPlan {
+                    kind: NeedKind::Eat,
+                    target: (10.0, 10.0),
+                },
+                AssignedJob,
+            ))
+            .id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: vec![colonist],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: vec![colonist],
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(release_job_on_needs);
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert!(queue.jobs[0].assigned_units.is_empty(),
-            "colonist should be removed from job");
+        assert!(
+            queue.jobs[0].assigned_units.is_empty(),
+            "colonist should be removed from job"
+        );
 
-        assert!(!world.entity(colonist).contains::<AssignedJob>(),
-            "AssignedJob should be removed from entity");
+        assert!(
+            !world.entity(colonist).contains::<AssignedJob>(),
+            "AssignedJob should be removed from entity"
+        );
     }
 
     #[test]
@@ -763,19 +921,19 @@ mod tests {
         let tile_map = world.resource::<TileMapResource>();
         let (cx, cy) = tile_map.tile_to_world(5, 5);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: cx, y: cy },
-        )).id();
+        let _colonist = world.spawn((UnitId(0), Position { x: cx, y: cy })).id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: vec![_colonist],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: vec![_colonist],
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -783,27 +941,32 @@ mod tests {
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert_eq!(queue.jobs[0].progress, BUILD_SPEED * 1.0,
-            "progress should increase by BUILD_SPEED * dt for 1 worker");
+        assert_eq!(
+            queue.jobs[0].progress,
+            BUILD_SPEED * 1.0,
+            "progress should increase by BUILD_SPEED * dt for 1 worker"
+        );
     }
 
     #[test]
     fn progress_requires_proximity() {
         let mut world = make_world(25, 19);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: 100.0, y: 100.0 },
-        )).id();
+        let _colonist = world
+            .spawn((UnitId(0), Position { x: 100.0, y: 100.0 }))
+            .id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: vec![_colonist],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: vec![_colonist],
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -811,8 +974,10 @@ mod tests {
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert_eq!(queue.jobs[0].progress, 0.0,
-            "distant worker should not contribute to progress");
+        assert_eq!(
+            queue.jobs[0].progress, 0.0,
+            "distant worker should not contribute to progress"
+        );
     }
 
     #[test]
@@ -824,14 +989,17 @@ mod tests {
         let w1 = world.spawn((UnitId(0), Position { x: cx, y: cy })).id();
         let w2 = world.spawn((UnitId(1), Position { x: cx, y: cy })).id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 100.0,
-            assigned_units: vec![w1, w2],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 100.0,
+                assigned_units: vec![w1, w2],
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -839,22 +1007,28 @@ mod tests {
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert_eq!(queue.jobs[0].progress, BUILD_SPEED * 2.0,
-            "2 workers should give 2x speed");
+        assert_eq!(
+            queue.jobs[0].progress,
+            BUILD_SPEED * 2.0,
+            "2 workers should give 2x speed"
+        );
     }
 
     #[test]
     fn no_workers_no_progress() {
         let mut world = make_world(25, 19);
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: Vec::new(),
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: Vec::new(),
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -862,8 +1036,10 @@ mod tests {
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert_eq!(queue.jobs[0].progress, 0.0,
-            "no workers should mean no progress");
+        assert_eq!(
+            queue.jobs[0].progress, 0.0,
+            "no workers should mean no progress"
+        );
     }
 
     #[test]
@@ -872,23 +1048,23 @@ mod tests {
         let tile_map = world.resource::<TileMapResource>();
         let (cx, cy) = tile_map.tile_to_world(3, 4);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: cx, y: cy },
-        )).id();
+        let _colonist = world.spawn((UnitId(0), Position { x: cx, y: cy })).id();
 
         let idx = (4 * 25 + 3) as usize;
         world.resource_mut::<MapObjects>().tiles[idx] =
             Some(MapTileObject::ConstructionSite(ObjectKind::Bed));
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 3,
-            row: 4,
-            kind: ObjectKind::Bed,
-            progress: 79.0,
-            max_progress: 80.0,
-            assigned_units: vec![_colonist],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 3,
+                row: 4,
+                kind: ObjectKind::Bed,
+                progress: 79.0,
+                max_progress: 80.0,
+                assigned_units: vec![_colonist],
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -897,7 +1073,10 @@ mod tests {
 
         let map = world.resource::<MapObjects>();
         assert!(
-            matches!(&map.tiles[idx], Some(MapTileObject::Building(ObjectKind::Bed))),
+            matches!(
+                &map.tiles[idx],
+                Some(MapTileObject::Building(ObjectKind::Bed))
+            ),
             "site should become a finished building"
         );
 
@@ -911,19 +1090,19 @@ mod tests {
         let tile_map = world.resource::<TileMapResource>();
         let (cx, cy) = tile_map.tile_to_world(7, 8);
 
-        let _colonist = world.spawn((
-            UnitId(0),
-            Position { x: cx, y: cy },
-        )).id();
+        let _colonist = world.spawn((UnitId(0), Position { x: cx, y: cy })).id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 7,
-            row: 8,
-            kind: ObjectKind::Wall,
-            progress: 49.0,
-            max_progress: 50.0,
-            assigned_units: vec![_colonist],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 7,
+                row: 8,
+                kind: ObjectKind::Wall,
+                progress: 49.0,
+                max_progress: 50.0,
+                assigned_units: vec![_colonist],
+            });
         world.insert_resource(DeltaTime(1.0));
 
         let mut schedule = Schedule::default();
@@ -931,7 +1110,131 @@ mod tests {
         schedule.run(&mut world);
 
         let tile_map = world.resource::<TileMapResource>();
-        assert!(!tile_map.is_walkable(7, 8), "wall tile should be blocked after construction");
+        assert!(
+            !tile_map.is_walkable(7, 8),
+            "wall tile should be blocked after construction"
+        );
+    }
+
+    #[test]
+    fn berry_bush_completion_keeps_tile_walkable() {
+        let mut world = make_world(25, 19);
+        let tile_map = world.resource::<TileMapResource>();
+        let (cx, cy) = tile_map.tile_to_world(3, 4);
+        let colonist = world.spawn((UnitId(0), Position { x: cx, y: cy })).id();
+        let idx = (4 * 25 + 3) as usize;
+
+        world.resource_mut::<MapObjects>().tiles[idx] =
+            Some(MapTileObject::ConstructionSite(ObjectKind::BerryBush));
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 3,
+                row: 4,
+                kind: ObjectKind::BerryBush,
+                progress: 39.0,
+                max_progress: 40.0,
+                assigned_units: vec![colonist],
+            });
+        world.insert_resource(DeltaTime(1.0));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(construction_progress_system);
+        schedule.run(&mut world);
+
+        assert!(matches!(
+            &world.resource::<MapObjects>().tiles[idx],
+            Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5))
+        ));
+        assert!(world.resource::<TileMapResource>().is_walkable(3, 4));
+    }
+
+    #[test]
+    fn nearest_object_is_selected_relative_to_unit_position() {
+        let mut tile_map = TileMapResource::new(42);
+        tile_map.tiles.fill(true);
+        let mut map_objects = MapObjects::new(tile_map.cols, tile_map.rows);
+        let first = (tile_map.cols + 1) as usize;
+        let second = (15 * tile_map.cols + 20) as usize;
+        map_objects.tiles[first] = Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5));
+        map_objects.tiles[second] = Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5));
+
+        assert_eq!(
+            find_nearest_object(&map_objects, &tile_map, (0.5, 0.5), ObjectKind::BerryBush,),
+            Some((1.5, 1.5))
+        );
+        assert_eq!(
+            find_nearest_object(&map_objects, &tile_map, (20.5, 15.5), ObjectKind::BerryBush,),
+            Some((20.5, 15.5))
+        );
+    }
+
+    #[test]
+    fn no_reachable_target_does_not_create_direct_fallback() {
+        let mut world = make_world(25, 19);
+        let start_idx = 5 * 25 + 5;
+        world.resource_mut::<TileMapResource>().tiles.fill(false);
+        world.resource_mut::<TileMapResource>().tiles[start_idx] = true;
+        let entity = world
+            .spawn((
+                UnitId(0),
+                Position { x: 5.5, y: 5.5 },
+                Path {
+                    waypoints: Vec::new(),
+                },
+            ))
+            .id();
+        world
+            .resource_mut::<Messages<TargetReached>>()
+            .write(TargetReached { entity });
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(find_path_action);
+        schedule.run(&mut world);
+
+        assert!(
+            world
+                .entity(entity)
+                .get::<Path>()
+                .unwrap()
+                .waypoints
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn movement_stops_before_blocked_waypoint() {
+        let mut world = make_world(25, 19);
+        let mut tile_map = world.resource_mut::<TileMapResource>();
+        tile_map.tiles.fill(true);
+        tile_map.tiles[25 + 2] = false;
+        let entity = world
+            .spawn((
+                UnitId(0),
+                Position { x: 1.5, y: 1.5 },
+                Path {
+                    waypoints: vec![(1.5, 1.5), (2.5, 1.5)],
+                },
+                Speed(DEFAULT_SPEED),
+            ))
+            .id();
+        world.insert_resource(DeltaTime(1.0));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(move_along_path);
+        schedule.run(&mut world);
+
+        let position = world.entity(entity).get::<Position>().unwrap();
+        assert_eq!((position.x, position.y), (1.5, 1.5));
+        assert!(
+            world
+                .entity(entity)
+                .get::<Path>()
+                .unwrap()
+                .waypoints
+                .is_empty()
+        );
     }
 
     #[test]
@@ -940,13 +1243,25 @@ mod tests {
 
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 1, row: 1, kind: ObjectKind::Wall });
+            .write(BuildRequest {
+                col: 1,
+                row: 1,
+                kind: ObjectKind::Wall,
+            });
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 2, row: 1, kind: ObjectKind::Bed });
+            .write(BuildRequest {
+                col: 2,
+                row: 1,
+                kind: ObjectKind::Bed,
+            });
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 3, row: 1, kind: ObjectKind::BerryBush });
+            .write(BuildRequest {
+                col: 3,
+                row: 1,
+                kind: ObjectKind::BerryBush,
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(construction_system);
@@ -963,34 +1278,31 @@ mod tests {
     fn max_workers_per_job_is_enforced() {
         let mut world = make_world(25, 19);
 
-        let colonist_a = world.spawn((
-            UnitId(0),
-            Position { x: 5.5, y: 5.5 },
-        )).id();
-        let colonist_b = world.spawn((
-            UnitId(1),
-            Position { x: 5.5, y: 5.5 },
-        )).id();
-        let _colonist_c = world.spawn((
-            UnitId(2),
-            Position { x: 5.5, y: 5.5 },
-        )).id();
+        let colonist_a = world.spawn((UnitId(0), Position { x: 5.5, y: 5.5 })).id();
+        let colonist_b = world.spawn((UnitId(1), Position { x: 5.5, y: 5.5 })).id();
+        let _colonist_c = world.spawn((UnitId(2), Position { x: 5.5, y: 5.5 })).id();
 
-        world.resource_mut::<ConstructionQueue>().jobs.push(ConstructionJob {
-            col: 5,
-            row: 5,
-            kind: ObjectKind::Wall,
-            progress: 0.0,
-            max_progress: 50.0,
-            assigned_units: vec![colonist_a, colonist_b],
-        });
+        world
+            .resource_mut::<ConstructionQueue>()
+            .jobs
+            .push(ConstructionJob {
+                col: 5,
+                row: 5,
+                kind: ObjectKind::Wall,
+                progress: 0.0,
+                max_progress: 50.0,
+                assigned_units: vec![colonist_a, colonist_b],
+            });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(job_assignment_system);
         schedule.run(&mut world);
 
         let queue = world.resource::<ConstructionQueue>();
-        assert_eq!(queue.jobs[0].assigned_units.len(), 2,
-            "third colonist should not be assigned to a full job");
+        assert_eq!(
+            queue.jobs[0].assigned_units.len(),
+            2,
+            "third colonist should not be assigned to a full job"
+        );
     }
 }

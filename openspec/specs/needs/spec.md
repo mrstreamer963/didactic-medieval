@@ -1,6 +1,8 @@
 # Needs (Satiation & Energy)
 
-**Purpose**: Colonists have basic biological needs (hunger and fatigue) that decay over time and must be fulfilled by visiting appropriate buildings.
+## Purpose
+
+Colonists have basic biological needs (hunger and fatigue) that decay over time and must be fulfilled by visiting appropriate buildings.
 
 ## Requirements
 
@@ -51,22 +53,22 @@ When a colonist's `Energy` rises above 90 and they have `TiredDebuff`, the syste
 - **THEN** system emits `Rested` event and removes `TiredDebuff`
 
 ### Requirement: Hungry colonist seeks berry bush
-When a colonist receives a `Hungry` event, the system SHALL find the nearest `FoodSource(BerryBush, _)` on the map and create a `NeedsPlan` with kind `Eat` targeting that bush's position.
+When a colonist receives a `Hungry` event, the system SHALL find the nearest available `FoodSource(BerryBush, _)` relative to that colonist's current position and create a `NeedsPlan` with kind `Eat` targeting that bush's position.
 
 #### Scenario: Hungry colonist plans to go to berry bush
 - **WHEN** a colonist triggers `Hungry`
-- **THEN** system searches `MapObjects` for the nearest `FoodSource(BerryBush, _)` and assigns `NeedsPlan { Eat, bush_pos }`
+- **THEN** system searches `MapObjects` for the nearest charged `FoodSource(BerryBush, _)` relative to the colonist and assigns `NeedsPlan { Eat, bush_pos }`
 
 #### Scenario: No berry bushes available
 - **WHEN** a colonist triggers `Hungry` but no berry bushes exist on the map
 - **THEN** no `NeedsPlan` is created; colonist continues wandering
 
 ### Requirement: Tired colonist seeks bed
-When a colonist receives a `Tired` event, the system SHALL find the nearest bed on the map and create a `NeedsPlan` with kind `Sleep` targeting that bed's position.
+When a colonist receives a `Tired` event, the system SHALL find the nearest completed bed relative to that colonist's current position and create a `NeedsPlan` with kind `Sleep` targeting that bed's position.
 
 #### Scenario: Tired colonist plans to go to bed
 - **WHEN** a colonist triggers `Tired`
-- **THEN** system searches `MapObjects` for the nearest `Bed` and assigns `NeedsPlan { Sleep, bed_pos }`
+- **THEN** system searches `MapObjects` for the nearest `Bed` relative to the colonist and assigns `NeedsPlan { Sleep, bed_pos }`
 
 #### Scenario: No beds available
 - **WHEN** a colonist triggers `Tired` but no beds exist on the map
@@ -96,11 +98,11 @@ When a colonist has a `NeedsPlan`, the system SHALL move the colonist toward the
 - **THEN** `find_path_action` does NOT assign a random wandering target
 
 ### Requirement: Initial world has three berry bushes
-When the game world is created, `create_game_world` SHALL spawn 3 `FoodSource(BerryBush, 5)` on random walkable tiles.
+When the game world is created, `create_game_world` SHALL spawn exactly 3 `FoodSource(BerryBush, 5)` on three distinct walkable tiles.
 
 #### Scenario: Three bushes spawn at game start
 - **WHEN** `create_game_world` executes
-- **THEN** 3 `FoodSource(BerryBush, 5)` are placed on random walkable tiles via `random_walkable_tile`
+- **THEN** exactly 3 `FoodSource(BerryBush, 5)` are placed on distinct walkable tiles
 
 ### Requirement: Sated/Rested clears needs plan
 When a colonist receives a `Sated` or `Rested` event, the system SHALL remove the matching `NeedsPlan`.

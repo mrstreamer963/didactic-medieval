@@ -1,6 +1,8 @@
 # Building
 
-**Purpose**: Players can place buildings (walls, beds, berry bushes) on the map via a build mode UI, with buildings rendered visually and affecting gameplay.
+## Purpose
+
+Players can place buildings (walls, beds, berry bushes) on the map via a build mode UI, with buildings rendered visually and affecting gameplay.
 
 ## Requirements
 
@@ -34,13 +36,14 @@ When build mode is active and the player clicks a valid tile on the game map, th
 - **WHEN** player clicks a tile that already has a building
 - **THEN** the build request is ignored
 
-#### Scenario: Place building on blocked tile
+#### Scenario: Place any building on blocked tile
 - **WHEN** player clicks a blocked (non-walkable) tile
-- **THEN** the build request is ignored
+- **THEN** the build request is ignored for walls, beds, and berry bushes
 
 #### Scenario: Place wall on walkable tile
 - **WHEN** player builds a wall on a walkable tile
-- **THEN** the tile becomes blocked in `TileMapResource`; A* paths are recalculated
+- **THEN** the tile becomes blocked in `TileMapResource` only after construction completes
+- **THEN** future A* paths do not use the completed wall tile
 
 #### Scenario: Place wall on already blocked tile
 - **WHEN** player tries to build a wall on a blocked tile

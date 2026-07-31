@@ -1,61 +1,76 @@
-npm install @fission-ai/openspec@latest 
+# Devlog
 
-node ./node_modules/@fission-ai/openspec/bin/openspec.js
+## Инструменты
+
+```bash
+npm install
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack cargo-watch
+```
 
 ## Vite + React
 
 ```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build
-npm run preview  # после build
+npm run dev      # build:wasm без wasm-opt + watch Rust + Vite
+npm run build    # стандартная production-сборка без обязательного wasm-opt
+npm run preview  # просмотр dist после build
 ```
 
-## Rust / WASM toolchain
+Для явно оптимизированной WASM-сборки при наличии локального `wasm-opt`:
 
 ```bash
-rustup target add wasm32-unknown-unknown
-cargo install wasm-pack cargo-watch
+npm run build:wasm:optimized
 ```
 
 ## Rust / WASM
 
 ```bash
-npm run build:wasm   # сборка crates/core → pkg/
-npm run dev          # build:wasm + watch Rust + Vite
-npm run build        # build:wasm + TypeScript + Vite production
+npm run build:wasm   # crates/game_core → корневой pkg/, no-opt
+npm run dev:wasm     # watch crates/game_core и повторная no-opt-сборка
 ```
 
-Приветствие на странице берётся из `getProgramName()` в WASM-модуле `crates/core`.
+Приветствие на странице берётся из `getProgramName()` в WASM-модуле
+`crates/game_core`.
 
-## ECS и юниты
+## ECS, юниты и координаты
 
-`crates/core` использует `bevy_ecs` для хранения юнитов. Компоненты: `Position`, `Target`, `Speed`, `UnitId`. WASM API:
+`crates/game_core` использует `bevy_ecs` для хранения юнитов. Карта имеет
+25×19 клеток, а все координаты Rust/WASM выражены в `tile-units`, не в
+пикселях: `tile_to_world(col, row)` возвращает центр `(col + 0.5, row + 0.5)`.
+Экранный рендерер умножает их на 32.
 
-- `createGameWorld(unitCount, seed)` — спавн юнитов со случайными позициями и целями в поле 800×600 (seed — `bigint` в JS)
-- `getUnitPositions()` — JSON-массив `[{ "id", "x", "y" }, ...]`
-- `tick(deltaMs)` — один шаг симуляции: движение к цели со скоростью 60 px/s, при достижении — новая случайная цель
+Компонент `Path` содержит мировые waypoint-ы `(f32, f32)` в центрах
+проходимых клеток. Маршруты создаются A* и не используют заблокированные
+клетки.
 
-Системы `move_towards_target` и `assign_random_target` в `systems.rs` связаны сообщением `TargetReached` через ECS message bus (`Messages<TargetReached>`). При достижении цели movement-система отправляет сообщение; assign-система назначает новую случайную цель. Системы запускаются через `Schedule` в `GameWorld::tick`.
+WASM API:
 
-Фронтенд рисует 50 юнитов на `<canvas>` (`src/UnitsCanvas.tsx`) в цикле `requestAnimationFrame`: `tick` + перерисовка. Кнопка «Перегенерировать» создаёт новый мир с другим seed.
+- `createGameWorld(unitCount, seed)` — создаёт заданное число юнитов; фронтенд
+  использует 3 стартовых юнита.
+- `getUnitPositions()` — JSON-массив `[{ "id", "x", "y" }, ...]` в tile-units.
+- `tick(deltaMs)` — один шаг симуляции с ограничением delta до 200 мс.
+- `getTileMap()` — карта 25×19 с обозначениями `G` (проходимая) и `B` (blocked).
+- `build(col, row, kind)` — ставит заявку на стену, кровать или куст только на
+  свободную проходимую клетку.
 
-Зависимости Rust: `bevy_ecs` 0.19, `rand`, `getrandom` (feature `js` для WASM).
+Кнопка «Перегенерировать» создаёт новый мир с другим seed.
 
 ## Build version
 
-Номер версии каждого слоя — компактная дата-время UTC (`YYYYMMDD.HHMMSS`) последнего git-коммита, затронувшего этот слой:
+Номер версии каждого слоя — компактная дата-время UTC (`YYYYMMDD.HHMMSS`)
+последнего git-коммита, затронувшего этот слой:
 
 - **frontend** — последний коммит по `src/`
-- **core** — последний коммит по `crates/core/`
+- **core** — последний коммит по `crates/game_core/`
 
-В футере приложения и через API (`getFrontendBuildInfo()`, `getCoreBuildInfo()`, `getBuildInfo()`).
+В футере приложения и через API доступны `getFrontendBuildInfo()`,
+`getCoreBuildInfo()` и `getBuildInfo()`.
 
 Сверка с git:
 
 ```bash
 TZ=UTC git log -1 --format=%cd --date=format:%Y%m%d.%H%M%S -- src/
-TZ=UTC git log -1 --format=%cd --date=format:%Y%m%d.%H%M%S -- crates/core/
+TZ=UTC git log -1 --format=%cd --date=format:%Y%m%d.%H%M%S -- crates/game_core/
 ```
 
 Если git недоступен — версия `unknown`.

@@ -6,6 +6,7 @@ import { buildTerrain, type TileMapData } from './render/terrain'
 import { UnitSprite } from './render/UnitSprite'
 import { BuildingRenderer } from './render/BuildingRenderer'
 import { StatusIcons } from './render/StatusIcons'
+import { getSimulationDelta } from './simulation'
 
 export type UnitPosition = {
   id: number
@@ -161,14 +162,10 @@ export function UnitsCanvas({
 
       renderer.app.ticker.add((ticker) => {
         if (!world) return
-        if (gameSpeedRef.current === 0) {
-          world.tick(0)
-          if (buildings) {
-            buildings.sync(world.getMapObjects(), world.getConstructionProgress())
-          }
-          return
-        }
-        world.tick(ticker.deltaMS * gameSpeedRef.current)
+        const simulationDelta = getSimulationDelta(ticker.deltaMS, gameSpeedRef.current)
+        if (simulationDelta === null) return
+
+        world.tick(simulationDelta)
         const positions = parseUnitPositions(world.getUnitPositions())
         for (const pos of positions) {
           const unit = units[pos.id]

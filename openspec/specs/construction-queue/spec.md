@@ -1,6 +1,8 @@
 # Construction Queue
 
-**Purpose**: Buildings are not placed instantly. When the player places a building, a construction site appears on the map and colonists autonomously build it over time.
+## Purpose
+
+Buildings are not placed instantly. When the player places a building, a construction site appears on the map and colonists autonomously build it over time.
 
 ## Requirements
 
@@ -17,7 +19,7 @@ When the player clicks a valid tile in build mode, a `BuildRequest` is sent. Ins
 
 #### Scenario: Place construction site on blocked tile
 - **WHEN** player clicks a blocked (non-walkable) tile
-- **THEN** the build request is ignored
+- **THEN** the build request is ignored for walls, beds, and berry bushes
 
 ### Requirement: ConstructionQueue resource
 The simulation SHALL have a `ConstructionQueue` resource containing all active construction jobs.
@@ -58,7 +60,7 @@ Colonists SHALL pick up construction jobs when they are not fulfilling needs (hu
 - **THEN** they may take a construction job again on the next `job_assignment_system` tick
 
 ### Requirement: Construction progress accumulates over time
-Each tick, active construction jobs gain progress proportional to the number of assigned workers.
+Each tick, active construction jobs SHALL gain progress proportional to the number of assigned workers.
 
 #### Scenario: Progress increases with workers
 - **WHEN** one colonist is at the construction site for 1 second

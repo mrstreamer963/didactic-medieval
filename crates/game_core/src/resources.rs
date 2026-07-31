@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
-use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 #[derive(Resource)]
 pub struct SimulationRng(pub StdRng);
@@ -109,6 +109,20 @@ impl TileMapResource {
         }
 
         (0, 0)
+    }
+
+    pub fn shuffled_walkable_tiles(&self, rng: &mut StdRng) -> Vec<(u32, u32)> {
+        let mut tiles: Vec<(u32, u32)> = (0..self.rows)
+            .flat_map(|row| (0..self.cols).map(move |col| (col, row)))
+            .filter(|&(col, row)| self.is_walkable(col, row))
+            .collect();
+
+        for i in (1..tiles.len()).rev() {
+            let j = rng.gen_range(0..=i);
+            tiles.swap(i, j);
+        }
+
+        tiles
     }
 }
 

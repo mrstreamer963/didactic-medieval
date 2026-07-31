@@ -2,7 +2,8 @@
 
 ## Purpose
 
-Минимальный SPA на Vite + React: dev-сервер, production-сборка и UI, интегрированный с WASM-модулем для отображения приветствия.
+Минимальный SPA на Vite + React: dev-сервер, production-сборка и UI, интегрированный с WASM-модулем `crates/game_core` для отображения приветствия.
+
 ## Requirements
 ### Requirement: Development server
 
@@ -16,13 +17,15 @@ The project SHALL provide a Vite development server that serves the React applic
 
 ### Requirement: Production build
 
-The project SHALL produce a static production build via Vite.
+The project SHALL produce a static production build via Vite using the standard `npm run build` command in a supported development environment. The build SHALL succeed without the optional `wasm-opt` binary or an interactive download, while optimized WASM remains available through an explicitly documented optional toolchain.
 
-#### Scenario: Build succeeds
+#### Scenario: Build succeeds without optional optimizer
 
-- **WHEN** the user runs `npm run build`
+- **WHEN** the user runs `npm run build` on an environment with Rust, wasm-pack, and the WASM target but without an optional `wasm-opt` binary
+- **THEN** the WASM package is generated successfully without requiring an interactive download
+- **THEN** TypeScript compilation and Vite bundling complete with exit code 0
 - **THEN** optimized static assets are written to a `dist` directory
-- **THEN** the build completes with exit code 0
+- **THEN** optimized WASM remains available through an explicitly documented optional toolchain
 
 #### Scenario: Preview production build
 
@@ -31,7 +34,7 @@ The project SHALL produce a static production build via Vite.
 
 ### Requirement: Hello World UI
 
-The application SHALL render a visible hello world message as the primary content of the default route. The greeting text SHALL be obtained by calling `getProgramName()` from the Rust WASM module (`crates/core` / `pkg/`), not from a hardcoded string literal in React source.
+The application SHALL render a visible hello world message as the primary content of the default route. The greeting text SHALL be obtained by calling `getProgramName()` from the Rust WASM module (`crates/game_core` / `pkg/`), not from a hardcoded string literal in React source.
 
 #### Scenario: Default page shows greeting from WASM
 
@@ -117,5 +120,4 @@ The application SHALL provide a user-visible control (e.g. button labeled «Пе
 #### Scenario: Regenerate preserves unit count
 
 - **WHEN** the user activates the regenerate control
-- **THEN** the redrawn canvas shows the same number of units as before regeneration (default 50)
-
+- **THEN** the redrawn canvas shows the same number of units as before regeneration (default 3)

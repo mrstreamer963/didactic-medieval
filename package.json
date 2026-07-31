@@ -14,8 +14,9 @@
   "author": "",
   "type": "module",
   "scripts": {
-    "build:wasm": "wasm-pack build crates/game_core --target bundler --out-dir ../../pkg",
-    "dev:wasm": "cargo watch -w crates/game_core -w .git/HEAD -w .git/refs/heads -s 'wasm-pack build crates/game_core --target bundler --out-dir ../../pkg'",
+    "build:wasm": "wasm-pack build crates/game_core --target bundler --dev --no-opt --out-dir ../../pkg",
+    "build:wasm:optimized": "wasm-pack build crates/game_core --target bundler --release --out-dir ../../pkg",
+    "dev:wasm": "cargo watch -w crates/game_core -w .git/HEAD -w .git/refs/heads -s 'wasm-pack build crates/game_core --target bundler --dev --no-opt --out-dir ../../pkg'",
     "dev": "npm run build:wasm && concurrently \"npm run dev:wasm\" \"vite\"",
     "build": "npm run build:wasm && tsc -b && vite build",
     "test": "vitest run",

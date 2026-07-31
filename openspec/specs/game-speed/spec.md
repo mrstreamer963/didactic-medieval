@@ -1,6 +1,8 @@
 # Game Speed Controls
 
-**Purpose**: Add three simulation speeds (x1, x5, x10) and a pause mode, controllable via keyboard shortcuts and UI buttons.
+## Purpose
+
+Add three simulation speeds (x1, x5, x10) and a pause mode, controllable via keyboard shortcuts and UI buttons.
 
 ## Requirements
 

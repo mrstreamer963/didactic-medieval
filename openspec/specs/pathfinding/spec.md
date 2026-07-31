@@ -4,7 +4,7 @@
 
 A* pathfinding on a tile grid (Manhattan distance, 4-connected), `Path` component replacing `Target`, and ECS systems for path following and goal-seeking with retargeting.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: A* pathfinding
 
@@ -32,13 +32,13 @@ The crate SHALL provide a public function `astar(start: (u32, u32), goal: (u32, 
 
 ### Requirement: Path component
 
-Each unit entity SHALL have a `Path` component instead of the previous `Target` component. `Path` SHALL contain a `waypoints` field: `Vec<(f32, f32)>` of world coordinates.
+Each unit entity SHALL have a `Path` component instead of the previous `Target` component. `Path` SHALL contain a `waypoints` field: `Vec<(f32, f32)>` of world coordinates in tile-units.
 
 #### Scenario: Units spawn with path
 
 - **WHEN** `createGameWorld(unitCount, seed)` is called
 - **THEN** each spawned unit entity has `Position`, `Path`, and `Speed` components
-- **THEN** each unit has a non-empty `Path` with at least one waypoint within field bounds (0..800, 0..608)
+- **THEN** each unit has a non-empty `Path` with at least one waypoint at the center of a reachable walkable tile
 
 ### Requirement: move_along_path system
 
@@ -63,7 +63,7 @@ The ECS world SHALL include a `move_along_path` system that moves each unit's `P
 
 ### Requirement: find_path_action system
 
-The ECS world SHALL include a `find_path_action` system that reads unread `TargetReached` messages, generates a new random target tile within the field, runs A* from the unit's current tile to the target tile, and writes the resulting world-coordinate waypoints into the unit's `Path` component.
+The ECS world SHALL include a `find_path_action` system that reads unread `TargetReached` messages, generates a new random target tile within the field, runs A* from the unit's current tile to the target tile, and writes only the resulting world-coordinate waypoints into the unit's `Path` component. It SHALL not assign a direct fallback route when A* fails.
 
 #### Scenario: Path found and assigned
 
@@ -72,11 +72,11 @@ The ECS world SHALL include a `find_path_action` system that reads unread `Targe
 - **THEN** the unit's `Path` is set to a non-empty sequence of waypoints in world coordinates
 - **THEN** the first waypoint is the center of the unit's current tile (or the next tile if already centered)
 
-#### Scenario: Retarget on blocked goal
+#### Scenario: Retarget on blocked or unreachable goal
 
 - **WHEN** a `TargetReached` message is sent and A* cannot find a path to the generated target
 - **THEN** `find_path_action` generates a new random target and retries A*
-- **THEN** this retries until a reachable target is found (probabilistically guaranteed given ~88% walkable tiles)
+- **THEN** this retries until a reachable target is found or leaves the path empty for a later attempt
 
 #### Scenario: Path respects tile boundaries
 

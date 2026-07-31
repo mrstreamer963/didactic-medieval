@@ -7,7 +7,7 @@ mod world;
 
 use wasm_bindgen::prelude::*;
 
-pub use world::{create_game_world, GameWorld};
+pub use world::{GameWorld, create_game_world};
 
 #[wasm_bindgen(js_name = getProgramName)]
 pub fn get_program_name() -> String {
