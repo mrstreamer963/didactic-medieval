@@ -33,7 +33,7 @@ pub fn create_game_world(unit_count: u32, seed: u64) -> GameWorld {
     let mut rng = StdRng::seed_from_u64(seed);
 
     let tile_map = TileMapResource::new(seed);
-    let map_objects = MapObjects::new(tile_map.cols, tile_map.rows);
+    let mut map_objects = MapObjects::new(tile_map.cols, tile_map.rows);
 
     world.init_resource::<Messages<TargetReached>>();
     world.init_resource::<Messages<Hungry>>();
@@ -55,6 +55,14 @@ pub fn create_game_world(unit_count: u32, seed: u64) -> GameWorld {
             Satiation(100.0),
             Energy(100.0),
         ));
+    }
+
+    for _ in 0..3 {
+        let (col, row) = tile_map.random_walkable_tile(&mut rng);
+        let idx = (row * tile_map.cols + col) as usize;
+        if idx < map_objects.tiles.len() && map_objects.tiles[idx].is_none() {
+            map_objects.tiles[idx] = Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5));
+        }
     }
 
     world.insert_resource(tile_map);
@@ -162,7 +170,7 @@ impl GameWorld {
                         let kind_str = match kind {
                             ObjectKind::Wall => "wall",
                             ObjectKind::Bed => "bed",
-                            ObjectKind::Campfire => "campfire",
+                            ObjectKind::BerryBush => "berrybush",
                         };
                         job_json = String::new();
                         let _ = write!(
@@ -192,7 +200,7 @@ impl GameWorld {
         let object_kind = match kind {
             "wall" => ObjectKind::Wall,
             "bed" => ObjectKind::Bed,
-            "campfire" => ObjectKind::Campfire,
+            "berrybush" => ObjectKind::BerryBush,
             _ => return,
         };
         self.world
@@ -226,7 +234,7 @@ impl GameWorld {
                             let kind_str = match kind {
                                 ObjectKind::Wall => "wall",
                                 ObjectKind::Bed => "bed",
-                                ObjectKind::Campfire => "campfire",
+                                ObjectKind::BerryBush => "berrybush",
                             };
                             use std::fmt::Write as _;
                             let _ = write!(
@@ -234,11 +242,23 @@ impl GameWorld {
                                 r#"{{"col":{col},"row":{row},"kind":"{kind_str}"}}"#
                             );
                         }
+                        MapTileObject::FoodSource(kind, charges) => {
+                            let kind_str = match kind {
+                                ObjectKind::Wall => "wall",
+                                ObjectKind::Bed => "bed",
+                                ObjectKind::BerryBush => "berrybush",
+                            };
+                            use std::fmt::Write as _;
+                            let _ = write!(
+                                json,
+                                r#"{{"col":{col},"row":{row},"kind":"{kind_str}","charges":{charges}}}"#
+                            );
+                        }
                         MapTileObject::ConstructionSite(kind) => {
                             let kind_str = match kind {
                                 ObjectKind::Wall => "wall",
                                 ObjectKind::Bed => "bed",
-                                ObjectKind::Campfire => "campfire",
+                                ObjectKind::BerryBush => "berrybush",
                             };
                             use std::fmt::Write as _;
                             let _ = write!(
@@ -265,7 +285,7 @@ impl GameWorld {
             let kind_str = match job.kind {
                 ObjectKind::Wall => "wall",
                 ObjectKind::Bed => "bed",
-                ObjectKind::Campfire => "campfire",
+                ObjectKind::BerryBush => "berrybush",
             };
             use std::fmt::Write as _;
             let _ = write!(

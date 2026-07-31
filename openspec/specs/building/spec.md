@@ -1,11 +1,11 @@
 # Building
 
-**Purpose**: Players can place buildings (walls, beds, campfires) on the map via a build mode UI, with buildings rendered visually and affecting gameplay.
+**Purpose**: Players can place buildings (walls, beds, berry bushes) on the map via a build mode UI, with buildings rendered visually and affecting gameplay.
 
 ## Requirements
 
 ### Requirement: Player can enter build mode
-The frontend SHALL provide a toolbar with buttons for three building types: Wall, Bed, Campfire.
+The frontend SHALL provide a toolbar with buttons for three building types: Wall, Bed, Berry Bush.
 
 #### Scenario: Select build mode
 - **WHEN** player clicks the "Стена" button
@@ -14,6 +14,10 @@ The frontend SHALL provide a toolbar with buttons for three building types: Wall
 #### Scenario: Deselect build mode
 - **WHEN** player clicks the active build mode button or presses Escape
 - **THEN** build mode is deactivated
+
+#### Scenario: Select berry bush build
+- **WHEN** player clicks the "Куст" button
+- **THEN** build mode is activated for berry bushes; the button is highlighted
 
 #### Scenario: Build mode cycling
 - **WHEN** build mode is active and player clicks a different building button
@@ -53,9 +57,9 @@ The frontend SHALL render all placed buildings as visual sprites on a dedicated 
 - **WHEN** a bed is placed on the map
 - **THEN** a brown procedural sprite appears at that tile position
 
-#### Scenario: Campfire is rendered with animation
-- **WHEN** a campfire is placed on the map
-- **THEN** a procedural fire sprite with 2-frame animation appears at that tile position
+#### Scenario: Berry bush is rendered as green bush with berries
+- **WHEN** a berry bush is placed on the map
+- **THEN** a green semi-circular bush (`0x2d8a4e`) with 3-4 purple berry circles (`0x7b2d8e`) appears at that tile position
 
 #### Scenario: Building sprites persist across ticks
 - **WHEN** the simulation ticks
@@ -65,8 +69,8 @@ The frontend SHALL render all placed buildings as visual sprites on a dedicated 
 The WASM bridge SHALL expose `build(col, row, kind)`, `getMapObjects()`, and `getUnitStates()` methods.
 
 #### Scenario: Build method creates request
-- **WHEN** `world.build(5, 10, "campfire")` is called from JS
-- **THEN** ECS receives a `BuildRequest` for a campfire at col=5, row=10
+- **WHEN** `world.build(5, 10, "berrybush")` is called from JS
+- **THEN** ECS receives a `BuildRequest` for a berry bush at col=5, row=10
 
 #### Scenario: Get map objects returns JSON
 - **WHEN** `world.getMapObjects()` is called

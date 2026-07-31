@@ -24,7 +24,7 @@ export type UnitState = {
   assignedJob: { col: number; row: number; kind: string } | null
 }
 
-export type BuildMode = 'wall' | 'bed' | 'campfire' | null
+export type BuildMode = 'wall' | 'bed' | 'berrybush' | null
 
 const DEFAULT_UNIT_COUNT = 3
 const HIT_RADIUS = 20
@@ -161,7 +161,13 @@ export function UnitsCanvas({
 
       renderer.app.ticker.add((ticker) => {
         if (!world) return
-        if (gameSpeedRef.current === 0) return
+        if (gameSpeedRef.current === 0) {
+          world.tick(0)
+          if (buildings) {
+            buildings.sync(world.getMapObjects(), world.getConstructionProgress())
+          }
+          return
+        }
         world.tick(ticker.deltaMS * gameSpeedRef.current)
         const positions = parseUnitPositions(world.getUnitPositions())
         for (const pos of positions) {
@@ -231,7 +237,7 @@ export function UnitsCanvas({
       />
       {buildMode && hoverCol !== null && hoverRow !== null && (
         <div className="build-hint">
-          Строительство: {buildMode === 'wall' ? 'Стена' : buildMode === 'bed' ? 'Кровать' : 'Костёр'} ({hoverCol}, {hoverRow})
+          Строительство: {buildMode === 'wall' ? 'Стена' : buildMode === 'bed' ? 'Кровать' : 'Куст'} ({hoverCol}, {hoverRow})
         </div>
       )}
       <button type="button" className="regenerate-btn" onClick={onRegenerate}>

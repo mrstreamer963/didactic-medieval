@@ -24,15 +24,15 @@ The simulation SHALL have a `ConstructionQueue` resource containing all active c
 
 #### Scenario: ConstructionQueue structure
 - **GIVEN** a construction job exists
-- **THEN** it SHALL contain: `col`, `row`, `kind` (Wall/Bed/Campfire), `progress` (0.0–100.0), `max_progress`, and `assigned_units: Vec<Entity>`
+- **THEN** it SHALL contain: `col`, `row`, `kind` (Wall/Bed/BerryBush), `progress` (0.0–100.0), `max_progress`, and `assigned_units: Vec<Entity>`
 
 #### Scenario: BuildRequest creates ConstructionJob
 - **WHEN** `construction_system` receives a `BuildRequest`
-- **THEN** it adds a `ConstructionJob` with `progress: 0.0` and inserts `ConstructionSite(kind)` into `MapObjects`
+- **THEN** it adds a `ConstructionJob` with `kind`, `progress: 0.0`, and inserts `ConstructionSite(kind)` into `MapObjects`
 
 #### Scenario: Construction job removal
 - **WHEN** a construction job reaches `progress >= max_progress`
-- **THEN** the job is removed from the queue; `ConstructionSite` is replaced with the finished building in `MapObjects`
+- **THEN** the job is removed from the queue; `ConstructionSite` is replaced with the finished building in `MapObjects`; for BerryBush, the site becomes `FoodSource(BerryBush, 5)`
 
 ### Requirement: Colonists autonomously take construction jobs
 Colonists SHALL pick up construction jobs when they are not fulfilling needs (hunger/sleep).
@@ -73,9 +73,9 @@ Each tick, active construction jobs gain progress proportional to the number of 
 - **THEN** the construction site is replaced with the finished building in `MapObjects`; walls affect pathfinding
 
 #### Scenario: Different buildings have different build times
-- **GIVEN** a Wall has `max_progress: 50`, a Bed has `max_progress: 80`, a Campfire has `max_progress: 60`
+- **GIVEN** a Wall has `max_progress: 50`, a Bed has `max_progress: 80`, a BerryBush has `max_progress: 40`
 - **WHEN** each is built by one colonist
-- **THEN** Wall takes ~3.3s, Bed ~5.3s, Campfire ~4.0s
+- **THEN** Wall takes ~3.3s, Bed ~5.3s, BerryBush ~2.7s
 
 ### Requirement: Construction sites are rendered on the map
 The frontend SHALL render construction sites visually distinct from finished buildings, with a progress indicator.
@@ -95,6 +95,13 @@ The frontend SHALL render construction sites visually distinct from finished bui
 #### Scenario: Construction site replaced by finished building
 - **WHEN** a construction job completes
 - **THEN** the construction site sprite is removed; the finished building sprite appears in its place
+
+### Requirement: Berry bush does not block pathfinding
+When a berry bush is placed or constructed, the underlying tile SHALL remain walkable.
+
+#### Scenario: Berry bush tile is walkable
+- **WHEN** a `FoodSource(BerryBush, _)` or `ConstructionSite(BerryBush)` is on a tile
+- **THEN** the tile remains walkable in `TileMapResource`; A* paths are not affected
 
 ### Requirement: WASM API exposes construction data
 The WASM bridge SHALL expose construction queue data to the frontend.

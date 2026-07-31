@@ -14,7 +14,7 @@ export function UnitPanel({ unitId, unitStates, onClose }: UnitPanelProps) {
   if (unit.hungry) statusParts.push('голоден')
   if (unit.tired) statusParts.push('устал')
   if (unit.assignedJob) {
-    const kindNames: Record<string, string> = { wall: 'стену', bed: 'кровать', campfire: 'костёр' }
+    const kindNames: Record<string, string> = { wall: 'стену', bed: 'кровать', berrybush: 'куст' }
     statusParts.push(`строит ${kindNames[unit.assignedJob.kind] || unit.assignedJob.kind}`)
   } else if (unit.needsPlan === 'eat') {
     statusParts.push('ищет еду')
@@ -27,7 +27,7 @@ export function UnitPanel({ unitId, unitStates, onClose }: UnitPanelProps) {
   const goalText = unit.assignedJob
     ? `Стройка (${unit.assignedJob.col}, ${unit.assignedJob.row})`
     : unit.needsPlan
-      ? unit.needsPlan === 'eat' ? 'Костёр' : 'Кровать'
+      ? unit.needsPlan === 'eat' ? 'Куст' : 'Кровать'
       : '—'
 
   return (

@@ -21,10 +21,10 @@ export function BuildToolbar({ mode, onSelect }: BuildToolbarProps) {
         Кровать
       </button>
       <button
-        className={mode === 'campfire' ? 'active' : ''}
-        onClick={() => onSelect(mode === 'campfire' ? null : 'campfire')}
+        className={mode === 'berrybush' ? 'active' : ''}
+        onClick={() => onSelect(mode === 'berrybush' ? null : 'berrybush')}
       >
-        Костёр
+        Куст
       </button>
       {mode && (
         <button

@@ -13,13 +13,14 @@ pub struct DeltaTime(pub f32);
 pub enum ObjectKind {
     Wall,
     Bed,
-    Campfire,
+    BerryBush,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MapTileObject {
     Building(ObjectKind),
     ConstructionSite(ObjectKind),
+    FoodSource(ObjectKind, u8),
 }
 
 #[derive(Resource)]

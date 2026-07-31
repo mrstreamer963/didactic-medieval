@@ -4,8 +4,8 @@ import { RENDER_TILE_SIZE } from './SceneRenderer'
 export type MapObject = {
   col: number
   row: number
-  kind: 'wall' | 'bed' | 'campfire' | 'ConstructionSite'
-  underlying?: 'wall' | 'bed' | 'campfire'
+  kind: 'wall' | 'bed' | 'berrybush' | 'ConstructionSite'
+  underlying?: 'wall' | 'bed' | 'berrybush'
 }
 
 export type ConstructionProgress = {
@@ -97,13 +97,17 @@ export class BuildingRenderer {
         g.rect(4, RENDER_TILE_SIZE - 14, RENDER_TILE_SIZE - 8, 6)
         g.fill({ color: 0x654321 })
         break
-      case 'campfire': {
-        g.circle(16, 20, 6)
-        g.fill({ color: 0x8b4513 })
-        g.circle(16, 18, 4)
-        g.fill({ color: 0xff6600 })
-        g.circle(16, 17, 2)
-        g.fill({ color: 0xffcc00 })
+      case 'berrybush': {
+        g.moveTo(8, RENDER_TILE_SIZE)
+        g.arc(16, RENDER_TILE_SIZE, 8, Math.PI, 0)
+        g.closePath()
+        g.fill({ color: 0x2d8a4e })
+        g.circle(12, RENDER_TILE_SIZE - 8, 3)
+        g.fill({ color: 0x7b2d8e })
+        g.circle(20, RENDER_TILE_SIZE - 8, 3)
+        g.fill({ color: 0x7b2d8e })
+        g.circle(16, RENDER_TILE_SIZE - 12, 3)
+        g.fill({ color: 0x7b2d8e })
         break
       }
     }

@@ -50,15 +50,15 @@ When a colonist's `Energy` rises above 90 and they have `TiredDebuff`, the syste
 - **WHEN** a colonist's energy rises above 90 while `TiredDebuff` is active
 - **THEN** system emits `Rested` event and removes `TiredDebuff`
 
-### Requirement: Hungry colonist seeks campfire
-When a colonist receives a `Hungry` event, the system SHALL find the nearest campfire on the map and create a `NeedsPlan` with kind `Eat` targeting that campfire's position.
+### Requirement: Hungry colonist seeks berry bush
+When a colonist receives a `Hungry` event, the system SHALL find the nearest `FoodSource(BerryBush, _)` on the map and create a `NeedsPlan` with kind `Eat` targeting that bush's position.
 
-#### Scenario: Hungry colonist plans to go to campfire
+#### Scenario: Hungry colonist plans to go to berry bush
 - **WHEN** a colonist triggers `Hungry`
-- **THEN** system searches `MapObjects` for the nearest `Campfire` and assigns `NeedsPlan { Eat, campfire_pos }`
+- **THEN** system searches `MapObjects` for the nearest `FoodSource(BerryBush, _)` and assigns `NeedsPlan { Eat, bush_pos }`
 
-#### Scenario: No campfires available
-- **WHEN** a colonist triggers `Hungry` but no campfires exist on the map
+#### Scenario: No berry bushes available
+- **WHEN** a colonist triggers `Hungry` but no berry bushes exist on the map
 - **THEN** no `NeedsPlan` is created; colonist continues wandering
 
 ### Requirement: Tired colonist seeks bed
@@ -75,13 +75,17 @@ When a colonist receives a `Tired` event, the system SHALL find the nearest bed 
 ### Requirement: Colonist executes needs plan
 When a colonist has a `NeedsPlan`, the system SHALL move the colonist toward the plan target. Upon arrival, the colonist SHALL restore satiation (eat) or energy (sleep) at the appropriate rate.
 
-#### Scenario: Colonist moves toward campfire
+#### Scenario: Colonist moves toward berry bush
 - **WHEN** a colonist has `NeedsPlan { Eat, target }` and is farther than one tile from target
 - **THEN** system calculates an A* path to the target and moves the colonist along it
 
-#### Scenario: Colonist eats at campfire
+#### Scenario: Colonist eats at berry bush
 - **WHEN** a colonist with `NeedsPlan { Eat, target }` arrives at the target
 - **THEN** satiation increases by ~15/sec until above 95
+
+#### Scenario: Sated decrements berry bush charge
+- **WHEN** a colonist with `NeedsPlan { Eat, target }` becomes Sated and target is a berry bush
+- **THEN** the bush's charge is decremented by 1; if charges reach 0, the bush is removed from the map
 
 #### Scenario: Colonist sleeps at bed
 - **WHEN** a colonist with `NeedsPlan { Sleep, target }` arrives at the target
@@ -90,6 +94,13 @@ When a colonist has a `NeedsPlan`, the system SHALL move the colonist toward the
 #### Scenario: Needs plan has priority over wandering
 - **WHEN** a colonist has an active `NeedsPlan`
 - **THEN** `find_path_action` does NOT assign a random wandering target
+
+### Requirement: Initial world has three berry bushes
+When the game world is created, `create_game_world` SHALL spawn 3 `FoodSource(BerryBush, 5)` on random walkable tiles.
+
+#### Scenario: Three bushes spawn at game start
+- **WHEN** `create_game_world` executes
+- **THEN** 3 `FoodSource(BerryBush, 5)` are placed on random walkable tiles via `random_walkable_tile`
 
 ### Requirement: Sated/Rested clears needs plan
 When a colonist receives a `Sated` or `Rested` event, the system SHALL remove the matching `NeedsPlan`.

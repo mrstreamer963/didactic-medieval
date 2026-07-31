@@ -119,10 +119,10 @@ describe('BuildingRenderer', () => {
 
     it('positions progress bar at correct tile', () => {
       const mapJson = makeMapJson([
-        { col: 7, row: 4, kind: 'ConstructionSite', underlying: 'campfire' },
+        { col: 7, row: 4, kind: 'ConstructionSite', underlying: 'berrybush' },
       ])
       const progressJson = makeProgressJson([
-        { col: 7, row: 4, progress: 30, maxProgress: 60, kind: 'campfire' },
+        { col: 7, row: 4, progress: 30, maxProgress: 40, kind: 'berrybush' },
       ])
       renderer.sync(mapJson, progressJson)
       const bar = container.children[1] as Graphics
@@ -134,7 +134,7 @@ describe('BuildingRenderer', () => {
       const mapJson = makeMapJson([
         { col: 0, row: 0, kind: 'wall' },
         { col: 1, row: 0, kind: 'ConstructionSite', underlying: 'bed' },
-        { col: 2, row: 0, kind: 'ConstructionSite', underlying: 'campfire' },
+        { col: 2, row: 0, kind: 'ConstructionSite', underlying: 'berrybush' },
       ])
       const progressJson = makeProgressJson([
         { col: 1, row: 0, progress: 40, maxProgress: 80, kind: 'bed' },

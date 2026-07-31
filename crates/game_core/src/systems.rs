@@ -84,16 +84,17 @@ pub fn needs_decision(
     mut sated_reader: MessageReader<Sated>,
     mut rested_reader: MessageReader<Rested>,
     mut commands: Commands,
-    map_objects: Res<MapObjects>,
+    mut map_objects: ResMut<MapObjects>,
     tile_map: Res<TileMapResource>,
     debuffs: Query<(Entity, Option<&HungryDebuff>, Option<&TiredDebuff>), With<UnitId>>,
     needs_query: Query<
         (Entity, Option<&HungryDebuff>, Option<&TiredDebuff>, Option<&NeedsPlan>),
         With<UnitId>,
     >,
+    plans: Query<&NeedsPlan>,
 ) {
     for Hungry(entity) in hungry_reader.read() {
-        if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::Campfire) {
+        if let Some(target) = find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush) {
             commands.entity(*entity).insert(NeedsPlan {
                 kind: NeedKind::Eat,
                 target,
@@ -111,6 +112,26 @@ pub fn needs_decision(
     }
 
     for Sated(entity) in sated_reader.read() {
+        if let Ok(plan) = plans.get(*entity) {
+            if plan.kind == NeedKind::Eat {
+                let (tx, ty) = plan.target;
+                let col = tx.floor() as u32;
+                let row = ty.floor() as u32;
+                if col < tile_map.cols && row < tile_map.rows {
+                    let idx = (row * tile_map.cols + col) as usize;
+                    if idx < map_objects.tiles.len() {
+                        if let Some(MapTileObject::FoodSource(ObjectKind::BerryBush, ref mut charges)) = map_objects.tiles[idx] {
+                            if *charges > 0 {
+                                *charges -= 1;
+                            }
+                            if *charges == 0 {
+                                map_objects.tiles[idx] = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         commands.entity(*entity).remove::<NeedsPlan>();
         if let Ok((_, _, tired_debuff)) = debuffs.get(*entity) {
             if tired_debuff.is_some() {
@@ -130,7 +151,7 @@ pub fn needs_decision(
         if let Ok((_, hungry_debuff, _)) = debuffs.get(*entity) {
             if hungry_debuff.is_some() {
                 if let Some(target) =
-                    find_nearest_object(&map_objects, &tile_map, ObjectKind::Campfire)
+                    find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush)
                 {
                     commands.entity(*entity).insert(NeedsPlan {
                         kind: NeedKind::Eat,
@@ -156,7 +177,7 @@ pub fn needs_decision(
         }
         if hungry_debuff.is_some() {
             if let Some(target) =
-                find_nearest_object(&map_objects, &tile_map, ObjectKind::Campfire)
+                find_nearest_object(&map_objects, &tile_map, ObjectKind::BerryBush)
             {
                 commands.entity(entity).insert(NeedsPlan {
                     kind: NeedKind::Eat,
@@ -249,7 +270,7 @@ pub fn construction_system(
         let max_progress = match event.kind {
             ObjectKind::Wall => 50.0,
             ObjectKind::Bed => 80.0,
-            ObjectKind::Campfire => 60.0,
+            ObjectKind::BerryBush => 40.0,
         };
 
         construction_queue.jobs.push(ConstructionJob {
@@ -367,7 +388,11 @@ pub fn construction_progress_system(
         let idx = (job.row * tile_map.cols + job.col) as usize;
 
         if idx < map_objects.tiles.len() {
-            map_objects.tiles[idx] = Some(MapTileObject::Building(job.kind));
+            if job.kind == ObjectKind::BerryBush {
+                map_objects.tiles[idx] = Some(MapTileObject::FoodSource(ObjectKind::BerryBush, 5));
+            } else {
+                map_objects.tiles[idx] = Some(MapTileObject::Building(job.kind));
+            }
         }
 
         if job.kind == ObjectKind::Wall {
@@ -397,6 +422,7 @@ fn find_nearest_object(
             }
             match map_objects.tiles[idx] {
                 Some(MapTileObject::Building(k)) if k == kind => {}
+                Some(MapTileObject::FoodSource(k, _)) if k == kind => {}
                 _ => continue,
             }
             let (cx, cy) = tile_map.tile_to_world(col, row);
@@ -920,7 +946,7 @@ mod tests {
             .write(BuildRequest { col: 2, row: 1, kind: ObjectKind::Bed });
         world
             .resource_mut::<Messages<BuildRequest>>()
-            .write(BuildRequest { col: 3, row: 1, kind: ObjectKind::Campfire });
+            .write(BuildRequest { col: 3, row: 1, kind: ObjectKind::BerryBush });
 
         let mut schedule = Schedule::default();
         schedule.add_systems(construction_system);
@@ -930,7 +956,7 @@ mod tests {
         assert_eq!(queue.jobs.len(), 3);
         assert_eq!(queue.jobs[0].max_progress, 50.0, "Wall max_progress");
         assert_eq!(queue.jobs[1].max_progress, 80.0, "Bed max_progress");
-        assert_eq!(queue.jobs[2].max_progress, 60.0, "Campfire max_progress");
+        assert_eq!(queue.jobs[2].max_progress, 40.0, "BerryBush max_progress");
     }
 
     #[test]
